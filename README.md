@@ -55,13 +55,13 @@ the same password on app-managed Decos (`DECO_WEB_PASSWORD` if yours differs).
 
 ## Use it with Claude
 
-Needs [uv](https://docs.astral.sh/uv/) (`uvx` runs it without installing anything permanently).
+Needs [uv](https://docs.astral.sh/uv/) (`uvx` runs it without installing anything permanently). Or `pip install deco-local`, which gives the `deco` and `deco-mcp` commands.
 
 **Claude Code:**
 
 ```bash
 claude mcp add deco -e DECO_HOST=192.168.68.1 -e DECO_EMAIL=you@example.com -e DECO_PASSWORD='...' \
-  -- uvx --from git+https://github.com/ukbodypilot/deco-local deco-mcp
+  -- uvx --from deco-local deco-mcp
 ```
 
 Add `-e DECO_MCP_READONLY=1` for a read-only server.
@@ -73,7 +73,7 @@ Add `-e DECO_MCP_READONLY=1` for a read-only server.
   "mcpServers": {
     "deco": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/ukbodypilot/deco-local", "deco-mcp"],
+      "args": ["--from", "deco-local", "deco-mcp"],
       "env": {
         "DECO_HOST": "192.168.68.1",
         "DECO_EMAIL": "you@example.com",
