@@ -237,20 +237,51 @@ def _err(exc):
     return {"ok": False, "error": f"web fallback: {exc}", "_at": time.monotonic()}
 
 
-def snapshot(host: str, password: str, names=None) -> dict:
+NODE_MAP_TTL = 21600  # s before the whole client->node map is rebuilt
+NODE_MAP_MIN_AGE = 600  # s; a client the map has never seen forces a rebuild only if the map is older than this
+
+
+def _node_map_path():
+    return config.state_path("web_nodes.json")
+
+
+def _load_node_map():
+    try:
+        with open(_node_map_path()) as f:
+            m = json.load(f)
+        return m["at"], m["node_of"], set(m.get("seen", [])), m.get("cursor", 0)
+    except (OSError, ValueError, KeyError):
+        return 0, {}, set(), 0
+
+
+def snapshot(host: str, password: str, names=None, gap: float = 1.5, probes: int = 2) -> dict:
     """Read what the web interface offers, reshaped into tmp.py's read names and shapes (WEB_READS:
     device_list, client_list, client_list_speed, wan_lan_status, device_resource_info), as
     {name: {"ok": True, "result": ...} | {"ok": False, "error": ...}, each with "ms"} like
     tmp.DecoClient.snapshot(). `names` limits it to some of those; the node list is always read,
-    since the others need it to name the main node and each client's node."""
+    since the others need it to name the main node and each client's node.
+
+    The router is slow to answer and a burst of requests pushes its CPU very high, so requests are
+    `gap` seconds apart. Which node each client is on costs one request per node, so the map is
+    kept in the state dir and only `probes` nodes are re-asked per call, rotating (a roam shows up
+    after a few calls, not at once); a new client, or a map older than NODE_MAP_TTL, rebuilds it
+    all. probes=0 only rebuilds."""
     want = set(names or WEB_READS)
     bad = want - set(WEB_READS)
     if bad:
         raise ValueError(f"not available from the web interface: {sorted(bad)}; it offers {list(WEB_READS)}")
     reads = {}
     started = time.monotonic()
+    first = [True]
+
+    def pace():
+        if not first[0] and gap:
+            time.sleep(gap)
+        first[0] = False
+
     with session(host, password) as web:
         try:
+            pace()
             devs = web.devices()
             by_mac = {d.get("mac"): d for d in devs}
             # the web list gives the master no device_id, but its children name it as their parent
@@ -270,15 +301,39 @@ def snapshot(host: str, password: str, names=None) -> dict:
         try:
             if not want & {"client_list", "client_list_speed"}:
                 raise _Skip
+            pace()
             cl = web.clients()
             # The full list doesn't say which node a client is on; asking per node does
             # (device_mac=<node mac>; the per-node lists add up to the full one).
-            node_of = {}
-            for d in (reads.get("device_list", {}).get("result") or {}).get("device_list", []):
+            at, node_of, seen, cursor = _load_node_map()
+            age = time.time() - at
+            unknown = any(c.get("mac") not in seen for c in cl)  # "seen", not node_of: a client no node list names must not force a rebuild every call
+            nodes = [d for d in (reads.get("device_list", {}).get("result") or {}).get("device_list", [])
+                     if d.get("group_status") in (None, "connected")]
+            rebuild = age > NODE_MAP_TTL or (unknown and age > NODE_MAP_MIN_AGE)
+            if rebuild:
+                node_of, picked, cursor = {}, nodes, 0
+            elif nodes and probes:
+                picked = [nodes[(cursor + i) % len(nodes)] for i in range(min(probes, len(nodes)))]
+                cursor = (cursor + len(picked)) % len(nodes)
+            else:
+                picked = []
+            ok = True
+            for d in picked:
                 try:
+                    pace()
                     for c in web.read("admin/client?form=client_list", {"device_mac": d.get("mac")}).get("client_list", []):
                         node_of[c.get("mac")] = d.get("device_id")
                 except DecoWebError:
+                    ok = False
+            if picked and (ok or not rebuild):
+                try:
+                    path = _node_map_path()
+                    os.makedirs(os.path.dirname(path), exist_ok=True)
+                    with open(path, "w") as f:
+                        json.dump({"at": time.time() if rebuild else at, "node_of": node_of, "cursor": cursor,
+                                   "seen": [c.get("mac") for c in cl]}, f)
+                except OSError:
                     pass
             speeds = []
             for c in cl:
@@ -296,12 +351,14 @@ def snapshot(host: str, password: str, names=None) -> dict:
             reads["client_list"], reads["client_list_speed"] = _err(exc), _err(exc)
         try:
             if "wan_lan_status" in want:
+                pace()
                 reads["wan_lan_status"] = _ok(web.wan())
         except DecoWebError as exc:
             reads["wan_lan_status"] = _err(exc)
         try:
             if "device_resource_info" not in want:
                 raise _Skip
+            pace()
             p = web.performance()
             master = next((d.get("device_id") for d in (reads.get("device_list", {}).get("result") or {}).get("device_list", [])
                            if d.get("role") == "master"), None)

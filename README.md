@@ -51,7 +51,7 @@ the same password on app-managed Decos (`DECO_WEB_PASSWORD` if yours differs).
 | `DECO_PASSWORD` | TP-Link account password |
 | `DECO_WEB_PASSWORD` | optional, if the web interface password differs |
 | `DECO_MCP_READONLY` | `1` for a read-only MCP server |
-| `DECO_STATE_DIR` | optional; lockout state and the web session (default `~/.local/state/deco-local`) |
+| `DECO_STATE_DIR` | optional; lockout state, the web session and the client-to-node map (default `~/.local/state/deco-local`) |
 
 ## Use it with Claude
 
@@ -125,6 +125,10 @@ with DecoClient("192.168.68.1", "you@example.com", "password") as deco:
 from deco_local import web
 reads = web.snapshot("192.168.68.1", "password", ["device_list", "client_list"])  # web interface
 ```
+
+The web interface is slow and its CPU climbs under a burst of requests, so `web.snapshot` spaces them `gap` seconds apart (default 1.5).
+Which node each client is on costs one request per node, so only `probes` nodes (default 2) are re-asked per call, rotating: a roam
+shows up after a few calls, not at once. A new client, or a map older than 6 h, rebuilds it all.
 
 `DecoClient.set` needs `confirm=True`, and `allow_unverified=True` for anything but a verified write.
 Reads come back in the router's own shapes; `deco_local/tmp.py` lists every read and write.

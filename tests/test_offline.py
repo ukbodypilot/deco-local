@@ -53,3 +53,38 @@ def test_readonly_drops_writes():
     full, ro = _tools(False), _tools(True)
     assert "write_router_setting" in full and "get_router_data_unredacted" in full
     assert set(ro) == {"list_reads", "get_router_data", "mesh_overview", "lockout_status"}
+
+
+def test_web_snapshot_rotates_node_probes(tmp_path, monkeypatch):
+    """Which node a client is on costs a request per node: only `probes` nodes are re-asked per call."""
+    import contextlib
+    monkeypatch.setenv("DECO_STATE_DIR", str(tmp_path))
+    asked = []
+
+    class Fake:
+        def devices(self):
+            return [{"mac": f"N{i}", "device_id": f"id{i}", "role": "master" if i == 0 else "slave",
+                     "group_status": "connected"} for i in range(4)]
+
+        def clients(self):
+            return [{"mac": "C1", "connection_type": "band5"}]
+
+        def read(self, path, params=None):
+            asked.append(params["device_mac"])
+            return {"client_list": [{"mac": "C1"}] if params["device_mac"] == "N2" else []}
+
+    @contextlib.contextmanager
+    def fake_session(host, password):
+        yield Fake()
+
+    monkeypatch.setattr(web, "session", fake_session)
+    snap = web.snapshot("h", "p", ["client_list"], gap=0, probes=2)
+    assert asked == ["N0", "N1", "N2", "N3"]  # first call builds the whole map
+    assert snap["client_list"]["result"]["client_list"][0]["linked_device_info"]["device_id"] == "id2"
+    asked.clear()
+    web.snapshot("h", "p", ["client_list"], gap=0, probes=2)
+    assert asked == ["N0", "N1"]
+    asked.clear()
+    snap = web.snapshot("h", "p", ["client_list"], gap=0, probes=2)
+    assert asked == ["N2", "N3"]
+    assert snap["client_list"]["result"]["client_list"][0]["linked_device_info"]["device_id"] == "id2"
