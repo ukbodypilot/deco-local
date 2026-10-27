@@ -12,4 +12,4 @@ from .busy import Busy
 from .tmp import READ, SETTINGS, WRITE, DecoClient, DecoError
 
 __all__ = ["Busy", "DecoClient", "DecoError", "READ", "SETTINGS", "WRITE"]
-__version__ = "0.1.0"
+__version__ = "1.0.0"

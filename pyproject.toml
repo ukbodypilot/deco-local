@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "deco-local"
-version = "0.1.0"
+version = "1.0.0"
 description = "Local control of TP-Link Deco mesh routers (no cloud, no app): Python library, CLI and MCP server"
 readme = "README.md"
 license = "MIT"
